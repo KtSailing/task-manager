@@ -15,12 +15,14 @@ const sequelize = new Sequelize({
   logging: false,
 });
 
+// --- モデル定義 ---
 class Task extends Model {}
 Task.init({
   id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
   title: { type: DataTypes.STRING, allowNull: false },
   description: { type: DataTypes.TEXT },
-  due_date: { type: DataTypes.DATEONLY }, // --- 期限日を追加 (DATEONLY: 年月日のみ) ---
+  due_date: { type: DataTypes.DATEONLY },
+  location: { type: DataTypes.STRING }, // --- 場所フィールドを追加 ---
   status: { type: DataTypes.STRING, defaultValue: 'pending' },
 }, { sequelize, modelName: 'Task' });
 
@@ -32,15 +34,15 @@ Tag.init({
 Task.belongsToMany(Tag, { through: 'TaskTags' });
 Tag.belongsToMany(Task, { through: 'TaskTags' });
 
+// --- 初期化 ---
 const init = async () => {
   await sequelize.sync({ force: true });
 
-  // ダミーデータ作成 (期限日を追加)
-  // 日付は YYYY-MM-DD 文字列で指定可能
+  // ダミーデータ作成 (locationを追加)
   const tasks = await Task.bulkCreate([
-    { title: '牛乳を買う', description: 'スーパーで牛乳と卵を買う', due_date: '2023-12-01', status: 'pending' },
-    { title: 'レポート提出', description: '月曜日の朝までに提出', due_date: '2023-11-20', status: 'completed' }, // 期限切れ想定
-    { title: 'ランニング', description: '公園を5km走る', due_date: '2023-12-10', status: 'pending' },
+    { title: '牛乳を買う', description: 'スーパーで牛乳と卵を買う', due_date: '2023-12-01', location: '近所のスーパー', status: 'pending' },
+    { title: 'レポート提出', description: '月曜日の朝までに提出', due_date: '2023-11-20', location: '大学', status: 'completed' },
+    { title: 'ランニング', description: '公園を5km走る', due_date: '2023-12-10', location: '中央公園', status: 'pending' },
   ]);
 
   const tags = await Tag.bulkCreate([
@@ -51,7 +53,7 @@ const init = async () => {
   await (tasks[1] as any).addTags([tags[2]]);
   await (tasks[2] as any).addTags([tags[3]]);
 
-  console.log('Database initialized with due dates.');
+  console.log('Database initialized with locations.');
   app.listen(PORT, () => console.log(`http://localhost:${PORT}`));
 };
 
@@ -59,41 +61,39 @@ init();
 
 // --- API ---
 
-// 1. タスク一覧取得 (期限日が早い順)
+// 1. タスク一覧取得
 app.get('/tasks', async (req, res) => {
   const { q, tag } = req.query;
-
   const whereClause: any = {};
   const includeClause: any = [];
 
   if (q) {
     whereClause[Op.or] = [
       { title: { [Op.like]: `%${q}%` } },
-      { description: { [Op.like]: `%${q}%` } }
+      { description: { [Op.like]: `%${q}%` } },
+      { location: { [Op.like]: `%${q}%` } } // 場所も検索対象に追加
     ];
   }
 
   if (tag) {
     includeClause.push({
-      model: Tag,
-      where: { name: tag },
-      attributes: [],
-      through: { attributes: [] }
+      model: Tag, where: { name: tag }, attributes: [], through: { attributes: [] }
     });
   }
 
   const tasks = await Task.findAll({
     where: whereClause,
     include: includeClause,
-    attributes: ['id', 'title', 'due_date'], // --- 一覧用に期限日も含める ---
-    order: [['due_date', 'ASC']] // --- 期限日が早い順にソート ---
+    attributes: ['id', 'title', 'due_date'], // 一覧は軽量のまま
+    order: [['due_date', 'ASC']]
   });
 
   setTimeout(() => res.json(tasks), 100);
 });
 
-// 2. 詳細取得 (ここは変更なし。DescriptionやTagsを取得する)
+// 2. 詳細取得 (すべてのデータを返す)
 app.get('/tasks/:id', async (req, res) => {
+  // findByPkはデフォルトですべてのフィールドを取得します
   const task = await Task.findByPk(req.params.id, {
     include: [{
       model: Tag,
@@ -104,11 +104,11 @@ app.get('/tasks/:id', async (req, res) => {
   setTimeout(() => res.json(task), 100);
 });
 
-// 3. 作成 (期限日対応)
+// 3. 作成 (location対応)
 app.post('/tasks', async (req, res) => {
   try {
-    const { title, description, due_date, tags } = req.body;
-    const task = await Task.create({ title, description, due_date });
+    const { title, description, due_date, location, tags } = req.body;
+    const task = await Task.create({ title, description, due_date, location });
 
     if (tags && Array.isArray(tags)) {
       for (const tagName of tags) {
@@ -123,16 +123,16 @@ app.post('/tasks', async (req, res) => {
   }
 });
 
-// 4. 更新 (期限日対応)
+// 4. 更新 (location対応)
 app.put('/tasks/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { title, description, status, due_date, tags } = req.body;
+    const { title, description, status, due_date, location, tags } = req.body;
     
     const task = await Task.findByPk(id);
     if (!task) return res.status(404).json({ error: 'Not found' });
 
-    task.set({ title, description, status, due_date }); // due_date更新
+    task.set({ title, description, status, due_date, location }); // location更新
     await task.save();
 
     if (tags && Array.isArray(tags)) {

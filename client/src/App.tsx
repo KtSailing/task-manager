@@ -26,11 +26,12 @@ interface Tag {
 interface TaskSummary {
   id: number;
   title: string;
-  due_date: string | null; // 一覧でも返ってくる
+  due_date: string | null;
 }
 
 interface TaskDetail extends TaskSummary {
-  description: string; // ※UIでは非表示にするが、データとしては取得する
+  description: string;
+  location: string;
   status: string;
   createdAt: string;
   updatedAt: string;
@@ -40,22 +41,40 @@ interface TaskDetail extends TaskSummary {
 interface TaskInput {
   title: string;
   description: string;
-  due_date: string; // 入力フォーム用 (YYYY-MM-DD)
+  due_date: string;
+  location: string;
   tagsStr: string;
 }
 
 function App() {
   const [tasks, setTasks] = useState<TaskDetail[]>([]);
   const [loading, setLoading] = useState(false);
-  
+  const [expandedIds, setExpandedIds] = useState<number[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchTag, setSearchTag] = useState('');
 
-  const [newTask, setNewTask] = useState<TaskInput>({ title: '', description: '', due_date: '', tagsStr: '' });
+  // フォーム用初期値
+  const initialFormState: TaskInput = { title: '', description: '', due_date: '', location: '', tagsStr: '' };
+  const [newTask, setNewTask] = useState<TaskInput>(initialFormState);
+  
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [editForm, setEditForm] = useState<TaskInput>({ title: '', description: '', due_date: '', tagsStr: '' });
+  const [editForm, setEditForm] = useState<TaskInput>(initialFormState);
 
-  // --- N+1 Fetch (変更なし) ---
+  // --- 共通スタイル (修正箇所: boxSizingを追加) ---
+  const inputStyle = {
+    display: 'block',
+    width: '100%',
+    marginBottom: '5px',
+    padding: '8px',
+    boxSizing: 'border-box' as const, // これではみ出しを防ぐ
+  };
+
+  const flexInputStyle = {
+    padding: '8px',
+    boxSizing: 'border-box' as const, // Flex内のアイテムにも適用
+  };
+
+  // --- N+1 Fetch ---
   const fetchTasksNPlusOne = async () => {
     setLoading(true);
     console.group('🔥 N+1 Sequence');
@@ -65,12 +84,10 @@ function App() {
       if (searchQuery) params.q = searchQuery;
       if (searchTag) params.tag = searchTag;
 
-      // 1. 一覧取得 (ここで既に期限日順にソートされている)
       const listResponse = await axios.get<TaskSummary[]>('http://localhost:3000/tasks', { params });
       const taskSummaries = listResponse.data;
       console.log(`Matched ${taskSummaries.length} items. Fetching details...`);
 
-      // 2. 詳細取得 (Descriptionなどを取るためにN回リクエストするが、画面にはDescriptionを出さない)
       const detailPromises = taskSummaries.map(async (summary) => {
         const detailResponse = await axios.get<TaskDetail>(`http://localhost:3000/tasks/${summary.id}`);
         return detailResponse.data;
@@ -96,7 +113,11 @@ function App() {
     return str.split(',').map(s => s.trim()).filter(s => s.length > 0);
   };
 
-  // --- Create ---
+  // --- Actions ---
+  const toggleExpand = (id: number) => {
+    setExpandedIds(prev => prev.includes(id) ? prev.filter(tid => tid !== id) : [...prev, id]);
+  };
+
   const handleCreate = async () => {
     if (!newTask.title) return alert("Title required");
     try {
@@ -104,19 +125,20 @@ function App() {
         ...newTask,
         tags: parseTags(newTask.tagsStr)
       });
-      setNewTask({ title: '', description: '', due_date: '', tagsStr: '' });
+      setNewTask(initialFormState);
       fetchTasksNPlusOne();
     } catch (error) { console.error(error); }
   };
 
-  // --- Update ---
-  const startEdit = (task: TaskDetail) => {
+  const startEdit = (task: TaskDetail, e: React.MouseEvent) => {
+    e.stopPropagation();
     setEditingId(task.id);
     const tagsStr = task.Tags ? task.Tags.map(t => t.name).join(', ') : '';
     setEditForm({ 
       title: task.title, 
       description: task.description, 
-      due_date: task.due_date || '', // nullの場合は空文字に
+      due_date: task.due_date || '', 
+      location: task.location || '', 
       tagsStr 
     });
   };
@@ -127,6 +149,7 @@ function App() {
         title: editForm.title,
         description: editForm.description,
         due_date: editForm.due_date,
+        location: editForm.location,
         status: currentStatus,
         tags: parseTags(editForm.tagsStr)
       });
@@ -135,14 +158,13 @@ function App() {
     } catch (error) { console.error(error); }
   };
 
-  const toggleStatus = async (task: TaskDetail) => {
+  const toggleStatus = async (task: TaskDetail, e: React.MouseEvent) => {
+    e.stopPropagation();
     const newStatus = task.status === 'completed' ? 'pending' : 'completed';
     const tags = task.Tags.map(t => t.name);
     try {
       await axios.put(`http://localhost:3000/tasks/${task.id}`, {
-        title: task.title,
-        description: task.description,
-        due_date: task.due_date,
+        ...task,
         status: newStatus,
         tags: tags
       });
@@ -150,7 +172,8 @@ function App() {
     } catch (error) { console.error(error); }
   }
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = async (id: number, e: React.MouseEvent) => {
+    e.stopPropagation();
     if (!confirm("Delete?")) return;
     try {
       await axios.delete(`http://localhost:3000/tasks/${id}`);
@@ -160,48 +183,53 @@ function App() {
 
   return (
     <div style={{ padding: '20px', fontFamily: 'sans-serif', maxWidth: '800px', margin: '0 auto' }}>
-      <h1>Task Manager (Sorted by Due Date)</h1>
+      <h1>Task Manager</h1>
 
       {/* 検索バー */}
       <div style={{ padding: '15px', backgroundColor: '#e3f2fd', borderRadius: '8px', marginBottom: '20px', display: 'flex', gap: '10px' }}>
         <input 
           type="text" placeholder="Search keywords..." value={searchQuery}
-          onChange={e => setSearchQuery(e.target.value)} style={{ flex: 1, padding: '8px' }}
+          onChange={e => setSearchQuery(e.target.value)} style={{ ...flexInputStyle, flex: 1 }}
         />
         <input 
           type="text" placeholder="Filter by tag..." value={searchTag}
-          onChange={e => setSearchTag(e.target.value)} style={{ flex: 1, padding: '8px' }}
+          onChange={e => setSearchTag(e.target.value)} style={{ ...flexInputStyle, flex: 1 }}
         />
         <button onClick={fetchTasksNPlusOne} disabled={loading}>Search</button>
         {(searchQuery || searchTag) && <button onClick={() => { setSearchQuery(''); setSearchTag(''); }}>Clear</button>}
       </div>
 
-      {/* 新規作成フォーム */}
+      {/* 新規作成 */}
       <div style={{ padding: '15px', backgroundColor: '#f0f0f0', borderRadius: '8px', marginBottom: '20px' }}>
         <h3>Create New Task</h3>
         <div style={{ display: 'flex', gap: '10px', marginBottom: '5px' }}>
           <input 
             type="text" placeholder="Title" value={newTask.title}
             onChange={e => setNewTask({...newTask, title: e.target.value})}
-            style={{ flex: 2, padding: '8px' }}
+            style={{ ...flexInputStyle, flex: 2 }}
           />
-          {/* 期限日入力 */}
           <input 
-            type="date" 
-            value={newTask.due_date}
+            type="date" value={newTask.due_date}
             onChange={e => setNewTask({...newTask, due_date: e.target.value})}
-            style={{ flex: 1, padding: '8px' }}
+            style={{ ...flexInputStyle, flex: 1 }}
           />
         </div>
+        
+        {/* 以下、inputStyle (boxSizing: border-box) を適用 */}
+        <input 
+          type="text" placeholder="Location (e.g. Office, Home)" value={newTask.location}
+          onChange={e => setNewTask({...newTask, location: e.target.value})}
+          style={inputStyle}
+        />
         <input 
           type="text" placeholder="Tags (comma separated)" value={newTask.tagsStr}
           onChange={e => setNewTask({...newTask, tagsStr: e.target.value})}
-          style={{ display: 'block', width: '100%', marginBottom: '5px', padding: '8px' }}
+          style={inputStyle}
         />
         <textarea 
-          placeholder="Description (Internal use only)" value={newTask.description}
+          placeholder="Description" value={newTask.description}
           onChange={e => setNewTask({...newTask, description: e.target.value})}
-          style={{ display: 'block', width: '100%', marginBottom: '10px', padding: '8px', height: '60px' }}
+          style={{ ...inputStyle, height: '60px' }}
         />
         <button onClick={handleCreate} disabled={loading}>Add Task</button>
       </div>
@@ -212,81 +240,125 @@ function App() {
       <hr />
 
       <div style={{ marginTop: '20px' }}>
-        {tasks.map((task) => (
-          <div key={task.id} style={{ 
-            border: '1px solid #ccc', borderRadius: '8px', padding: '15px', marginBottom: '10px',
-            backgroundColor: task.status === 'completed' ? '#e8f5e9' : 'white',
-            display: 'flex', flexDirection: 'column', gap: '5px'
-          }}>
-            {editingId === task.id ? (
-              // 編集モード
-              <div>
-                <input 
-                  value={editForm.title} onChange={e => setEditForm({...editForm, title: e.target.value})}
-                  style={{ width: '100%', marginBottom: '5px' }} placeholder="Title"
-                />
-                <input 
-                  type="date"
-                  value={editForm.due_date} onChange={e => setEditForm({...editForm, due_date: e.target.value})}
-                  style={{ width: '100%', marginBottom: '5px' }}
-                />
-                 <input 
-                  value={editForm.tagsStr} onChange={e => setEditForm({...editForm, tagsStr: e.target.value})}
-                  style={{ width: '100%', marginBottom: '5px' }} placeholder="Tags"
-                />
-                <textarea 
-                  value={editForm.description} onChange={e => setEditForm({...editForm, description: e.target.value})}
-                  style={{ width: '100%', marginBottom: '5px' }} placeholder="Description"
-                />
-                <button onClick={() => handleUpdate(task.id, task.status)}>Save</button>
-                <button onClick={() => setEditingId(null)} style={{ marginLeft: '5px' }}>Cancel</button>
-              </div>
-            ) : (
-              // 表示モード
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div>
-                    <h3 style={{ margin: '0 0 5px 0' }}>#{task.id} {task.title}</h3>
-                    {/* 期限日の表示 */}
-                    <div style={{ fontSize: '0.9rem', color: task.due_date ? '#d32f2f' : '#888', fontWeight: 'bold' }}>
-                      Due: {task.due_date ? task.due_date : 'No deadline'}
+        {tasks.map((task) => {
+          const isExpanded = expandedIds.includes(task.id);
+          const isCompleted = task.status === 'completed';
+
+          return (
+            <div 
+              key={task.id} 
+              onClick={() => toggleExpand(task.id)}
+              style={{ 
+                border: '1px solid #ccc', borderRadius: '8px', padding: '15px', marginBottom: '10px',
+                backgroundColor: isCompleted ? '#e8f5e9' : 'white',
+                cursor: 'pointer',
+                transition: 'background-color 0.2s'
+              }}
+            >
+              {editingId === task.id ? (
+                // --- 編集モード ---
+                <div onClick={e => e.stopPropagation()} style={{ cursor: 'default' }}>
+                  <input 
+                    value={editForm.title} onChange={e => setEditForm({...editForm, title: e.target.value})}
+                    style={inputStyle} placeholder="Title"
+                  />
+                  <input 
+                    type="date"
+                    value={editForm.due_date} onChange={e => setEditForm({...editForm, due_date: e.target.value})}
+                    style={inputStyle}
+                  />
+                  <input 
+                    value={editForm.location} onChange={e => setEditForm({...editForm, location: e.target.value})}
+                    style={inputStyle} placeholder="Location"
+                  />
+                   <input 
+                    value={editForm.tagsStr} onChange={e => setEditForm({...editForm, tagsStr: e.target.value})}
+                    style={inputStyle} placeholder="Tags"
+                  />
+                  <textarea 
+                    value={editForm.description} onChange={e => setEditForm({...editForm, description: e.target.value})}
+                    style={inputStyle} placeholder="Description"
+                  />
+                  <button onClick={() => handleUpdate(task.id, task.status)}>Save</button>
+                  <button onClick={() => setEditingId(null)} style={{ marginLeft: '5px' }}>Cancel</button>
+                </div>
+              ) : (
+                // --- 表示モード ---
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                         <button 
+                            onClick={(e) => toggleStatus(task, e)}
+                            style={{
+                              padding: '5px 10px',
+                              backgroundColor: isCompleted ? '#4CAF50' : '#fff',
+                              color: isCompleted ? 'white' : '#555',
+                              border: '1px solid #ccc',
+                              borderRadius: '4px',
+                              cursor: 'pointer',
+                              fontWeight: 'bold',
+                              fontSize: '0.8rem'
+                            }}
+                          >
+                            {isCompleted ? '✓ Completed' : 'Mark Complete'}
+                          </button>
+                          
+                          <h3 style={{ margin: 0, textDecoration: isCompleted ? 'line-through' : 'none', color: isCompleted ? '#888' : '#000' }}>
+                            {task.title}
+                          </h3>
+                      </div>
+                      
+                      <div style={{ fontSize: '0.9rem', color: task.due_date ? '#d32f2f' : '#888', fontWeight: 'bold', marginTop: '5px', marginLeft: '5px' }}>
+                        Due: {task.due_date ? task.due_date : 'No deadline'}
+                      </div>
+                    </div>
+
+                    <div>
+                      <button onClick={(e) => startEdit(task, e)}>Edit</button>
+                      <button onClick={(e) => handleDelete(task.id, e)} style={{ marginLeft: '5px', color: 'red' }}>Delete</button>
                     </div>
                   </div>
 
-                  <div>
-                    <button onClick={() => startEdit(task)}>Edit</button>
-                    <button onClick={() => handleDelete(task.id)} style={{ marginLeft: '5px', color: 'red' }}>Delete</button>
+                  <div style={{ marginTop: '8px', marginLeft: '5px' }}>
+                    {task.Tags && task.Tags.map(tag => (
+                      <span key={tag.name} 
+                        onClick={(e) => { e.stopPropagation(); setSearchTag(tag.name); }}
+                        style={{ 
+                          display: 'inline-block', backgroundColor: '#607D8B', color: 'white', 
+                          padding: '2px 8px', borderRadius: '4px', fontSize: '0.75rem', 
+                          marginRight: '5px', cursor: 'pointer' 
+                        }}>
+                        {tag.name}
+                      </span>
+                    ))}
                   </div>
-                </div>
 
-                {/* タグ表示 */}
-                <div style={{ marginTop: '8px' }}>
-                  {task.Tags && task.Tags.map(tag => (
-                    <span key={tag.name} 
-                      onClick={() => { setSearchTag(tag.name); }}
-                      style={{ 
-                        display: 'inline-block', backgroundColor: '#607D8B', color: 'white', 
-                        padding: '2px 8px', borderRadius: '4px', fontSize: '0.75rem', 
-                        marginRight: '5px', cursor: 'pointer' 
-                      }}>
-                      {tag.name}
-                    </span>
-                  ))}
+                  {/* --- 展開時の表示 --- */}
+                  {isExpanded && (
+                    <div style={{ marginTop: '15px', paddingTop: '10px', borderTop: '1px solid #ddd', animation: 'fadeIn 0.3s' }}>
+                      <p style={{ margin: '0 0 10px 0', fontWeight: 'bold', color: '#555' }}>
+                        📍 {task.location || 'No location specified'}
+                      </p>
+                      
+                      <p style={{ whiteSpace: 'pre-wrap', color: '#333', margin: '0' }}>
+                        {task.description || '(No description)'}
+                      </p>
+                    </div>
+                  )}
+
                 </div>
-                
-                <p style={{ margin: '8px 0 0 0', fontSize: '0.9rem' }}>
-                  Status: 
-                  <span onClick={() => toggleStatus(task)} style={{ cursor: 'pointer', color: 'blue', marginLeft: '5px', textDecoration: 'underline' }}>
-                    {task.status}
-                  </span>
-                </p>
-                
-                {/* description は表示しない */}
-              </div>
-            )}
-          </div>
-        ))}
+              )}
+            </div>
+          );
+        })}
       </div>
+      <style>{`
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(-5px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
     </div>
   );
 }
