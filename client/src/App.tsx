@@ -4,16 +4,16 @@ import axios from 'axios';
 
 // --- Axios Interceptors ---
 axios.interceptors.request.use((config) => {
-  console.log(`%c🚀 [REQUEST] ${config.method?.toUpperCase()} ${config.url}`, 'color: blue; font-weight: bold;', config.data ? config.data : '' );
+  console.log(`%c [REQUEST] ${config.method?.toUpperCase()} ${config.url}`, 'color: blue; font-weight: bold;', config.data ? config.data : '' );
   return config;
 });
 axios.interceptors.response.use(
   (response) => {
-    console.log(`%c✅ [RESPONSE] ${response.status} ${response.config.url}`,'color: green; font-weight: bold;', response.data);
+    console.log(`%c [RESPONSE] ${response.status} ${response.config.url}`,'color: green; font-weight: bold;', response.data);
     return response;
   },
   (error) => {
-    console.log(`%c❌ [ERROR] ${error.response?.status} ${error.config?.url}`,'color: red; font-weight: bold;', error.response?.data);
+    console.log(`%c [ERROR] ${error.response?.status} ${error.config?.url}`,'color: red; font-weight: bold;', error.response?.data);
     return Promise.reject(error);
   }
 );
@@ -77,7 +77,7 @@ function App() {
   // --- N+1 Fetch ---
   const fetchTasksNPlusOne = async () => {
     setLoading(true);
-    console.group('🔥 N+1 Sequence');
+    // console.group('🔥 N+1 Sequence');
 
     try {
       const params: any = {};
@@ -86,7 +86,7 @@ function App() {
 
       const listResponse = await axios.get<TaskSummary[]>('http://localhost:3000/tasks', { params });
       const taskSummaries = listResponse.data;
-      console.log(`Matched ${taskSummaries.length} items. Fetching details...`);
+      // console.log(`Matched ${taskSummaries.length} items. Fetching details...`);
 
       const detailPromises = taskSummaries.map(async (summary) => {
         const detailResponse = await axios.get<TaskDetail>(`http://localhost:3000/tasks/${summary.id}`);
@@ -183,7 +183,7 @@ function App() {
 
   return (
     <div style={{ padding: '20px', fontFamily: 'sans-serif', maxWidth: '800px', margin: '0 auto' }}>
-      <h1>Task Manager</h1>
+      <h1>Mono Task</h1>
 
       {/* 検索バー */}
       <div style={{ padding: '15px', backgroundColor: '#e3f2fd', borderRadius: '8px', marginBottom: '20px', display: 'flex', gap: '10px' }}>
